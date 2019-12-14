@@ -1,0 +1,332 @@
+
+// -*- mode: C++; c-indent-level: 4; c-basic-offset: 4; indent-tabs-mode: nil; -*-
+
+// we only include RcppEigen.h which pulls Rcpp.h in for us
+#include <iostream>
+#include <RcppEigen.h>
+#include <Rcpp.h>
+#include <cmath>
+// [[Rcpp::depends(RcppEigen)]]
+
+using namespace Rcpp;
+using namespace std;
+using namespace Eigen;
+
+
+////construct_Q0
+// [[Rcpp::export]]
+List Construct_Q0(const Eigen::VectorXd sigma2, const Eigen::VectorXd lambda){
+  int num_dim=sigma2.size();
+    List  Q0(num_dim);
+  for(int i_Q0=0;i_Q0<num_dim;i_Q0++){  // Is there a way to parallel
+	Eigen::MatrixXd d= Eigen::MatrixXd::Zero(3,3);
+    d(0,0)=sigma2[i_Q0];
+    d(0,2)=d(2,0)=-sigma2[i_Q0]*pow(lambda[i_Q0],2.0)/3.0;
+    d(1,1)=sigma2[i_Q0]*pow(lambda[i_Q0],2.0)/3.0;
+    d(2,2)=sigma2[i_Q0]*pow(lambda[i_Q0],4.0);
+    Q0[i_Q0]=d;
+	
+  }
+  return Q0;
+}
+
+////construct_GG
+// [[Rcpp::export]]
+List Construct_GG(Eigen::VectorXd delta_x, Eigen::VectorXd lambda){  //be careful about delta_x,lambda if one only wants to sample one
+   int num_obs=delta_x.size()+1;
+   int num_dim=lambda.size(); 
+   List GG(num_dim);                                       // num_dim list, each is 3(num_obs)\times 3 list
+    for(int i_GG=0;i_GG<num_dim;i_GG++){
+       Eigen::MatrixXd d= Eigen::MatrixXd::Zero(num_obs,9);  //the first row has all zeros 
+       for(int j_GG=0;j_GG<(num_obs-1);j_GG++){
+          int j_GG_1=j_GG+1;   
+		  d(j_GG_1,0)=pow(lambda[i_GG],2.0)*pow(delta_x[j_GG],2.0)+2*lambda[i_GG]*delta_x[j_GG]+2;
+		  d(j_GG_1,1)=-pow(lambda[i_GG],3.0)*pow(delta_x[j_GG],2.0);
+          d(j_GG_1,2)=pow(lambda[i_GG],4.0)*pow(delta_x[j_GG],2.0)-2*pow(lambda[i_GG],3.0)*delta_x[j_GG];
+          d(j_GG_1,3)=2*(lambda[i_GG]*pow(delta_x[j_GG],2.0)+delta_x[j_GG]);
+          d(j_GG_1,4)=-2*(pow(lambda[i_GG],2.0)*pow(delta_x[j_GG],2.0)-lambda[i_GG]*delta_x[j_GG]-1);
+		  d(j_GG_1,5)=2*(pow(lambda[i_GG],3.0)*pow(delta_x[j_GG],2.0)-3*pow(lambda[i_GG],2.0)*delta_x[j_GG]);
+          d(j_GG_1,6)=pow(delta_x[j_GG],2);
+          d(j_GG_1,7)=2*delta_x[j_GG]-lambda[i_GG]*pow(delta_x[j_GG],2.0);
+          d(j_GG_1,8)=pow(lambda[i_GG],2.0)*pow(delta_x[j_GG],2.0)-4*lambda[i_GG]*delta_x[j_GG]+2;    
+		  d.row(j_GG_1)=exp(-lambda[i_GG]*delta_x[j_GG])/2.0*d.row(j_GG_1);
+	   }
+       GG[i_GG]=d;
+	}
+	return GG;
+}
+
+////construct_Qi
+// [[Rcpp::export]]
+List Construct_Qi(Eigen::VectorXd sigma2,Eigen::VectorXd delta_x, Eigen::VectorXd lambda, List Q0){  //be careful about delta_x,lambda if one only wants to sample one
+   int num_obs=delta_x.size()+1;
+   int num_dim=sigma2.size(); 
+   
+   List Qi(num_dim);
+   for(int i_Qi=0;i_Qi<num_dim;i_Qi++){
+       Eigen::MatrixXd d= Eigen::MatrixXd::Zero(num_obs,9);  
+
+	   for(int j_Qi=0;j_Qi<(num_obs-1);j_Qi++){
+          int  j_Qi_1= j_Qi+1;
+          double  lambda_delta_x=lambda[i_Qi]*delta_x[j_Qi];  //close and jump then it is...
+          double exp_neg_2_lambda_delta_x=exp(-2*lambda_delta_x);
+
+          d(j_Qi_1, 0)=(exp_neg_2_lambda_delta_x*(3+6*lambda_delta_x+6*pow(lambda_delta_x,2.0)+4*pow(lambda_delta_x,3.0)+2*pow(lambda_delta_x,4.0))-3 )/(-4*pow(lambda[i_Qi],5.0));
+          d(j_Qi_1, 1)=  d(j_Qi_1, 3)=exp_neg_2_lambda_delta_x*pow(delta_x[j_Qi],4.0)/2.0;
+          d(j_Qi_1, 2)=  d(j_Qi_1, 6)=(exp_neg_2_lambda_delta_x*(1+2*lambda_delta_x+2*pow(lambda_delta_x,2.0)+4*pow(lambda_delta_x,3.0)-2*pow(lambda_delta_x,4.0))-1 )/(4*pow(lambda[i_Qi],3.0));
+          d(j_Qi_1, 4)= (exp_neg_2_lambda_delta_x*(1+2*lambda_delta_x+2*pow(lambda_delta_x,2.0)-4*pow(lambda_delta_x,3.0)+2*pow(lambda_delta_x,4.0))-1 )/(-4*pow(lambda[i_Qi],3.0));
+          d(j_Qi_1, 5)=  d(j_Qi_1, 7)=exp_neg_2_lambda_delta_x*pow(delta_x[j_Qi],2.0)*(4-4*lambda_delta_x+pow(lambda_delta_x,2.0) )/2.0;
+          d(j_Qi_1, 8)=(exp_neg_2_lambda_delta_x*(-3+10*lambda_delta_x-22*pow(lambda_delta_x,2.0)+12*pow(lambda_delta_x,3.0)-2*pow(lambda_delta_x,4.0))+3 )/(4*lambda[i_Qi])     ; 
+	   }
+	   d=d*(4*sigma2[i_Qi]*pow(lambda[i_Qi],5.0)/3.0);
+       Eigen::MatrixXd Q0_i_Qi=Q0[i_Qi];
+	   Q0_i_Qi.resize(1,9);
+	   d.row(0)=Q0_i_Qi;     // the first row is Q0[i_Qi];
+
+       Qi[i_Qi]=d;
+   }
+  return Qi;
+}
+
+////update_FRFt
+// [[Rcpp::export]]
+Eigen::VectorXd Update_FRFt(const List dlm_filter_matern_5_2_U_R,const Eigen::MatrixXd dlm_filter_matern_5_2_D_R, const int num_obs){
+   Eigen::VectorXd FRFt(num_obs);
+   for( int i_t=0;i_t<num_obs;i_t++){
+	   Eigen::MatrixXd dlm_filter_matern_5_2_U_R_i_t=dlm_filter_matern_5_2_U_R[i_t];
+       FRFt[i_t]=(dlm_filter_matern_5_2_U_R_i_t.row(0).array()*(dlm_filter_matern_5_2_D_R.row(i_t).array().pow(2.0))*dlm_filter_matern_5_2_U_R_i_t.row(0).array()).matrix().sum();
+   }
+   return  FRFt;
+}
+
+
+// [[Rcpp::export]]
+List Compute_pred_record( const Eigen::MatrixXd K, const List predict_dlm_record, Eigen::VectorXd index_test){
+	int num_index_test=index_test.size();
+	
+	List pred_record(num_index_test);
+	for(int i_pred=0;i_pred<num_index_test;i_pred++){
+        Eigen::MatrixXd predict_dlm_record_i_pred=predict_dlm_record[index_test[i_pred]-1];
+		pred_record[i_pred]=K*predict_dlm_record_i_pred;
+	}
+	return pred_record;
+
+}
+
+
+//this one only for prediction
+// [[Rcpp::export]]
+List Compute_pred_and_var_cond( const List pred_record, const List sd_dlm_record, const Eigen::MatrixXd K, const Eigen::MatrixXd output_ppl,const Eigen::VectorXd rowMeans_t_output,const Eigen::VectorXd index_test, const Eigen::VectorXd index_ppl_testing,const Eigen::VectorXd testing_site_j_index,const int num_test_site,const int num_ppl_all){
+    int index_test_size=index_test.size();
+	int index_ppl_testing_size=index_ppl_testing.size();
+    int index_ppl_testing_first=index_ppl_testing[0]-1;
+    //int index_ppl_testing_last=index_ppl_testing[index_ppl_testing_size-1]-1;
+
+	List pred_record_cond_and_variance (2*index_test_size);  //list of size with 2*M-burn.in, first M-burn.in is pred_record_cond and the last  M-burn.in is the variance
+     
+    Eigen::MatrixXd D(num_ppl_all,num_ppl_all);
+    Eigen::VectorXd sd_dlm_record_here;
+    Eigen::MatrixXd Sigma;
+    Eigen::MatrixXd  sd_dlm_record_i_pred_cond;
+    Eigen::MatrixXd Useful_block;
+	//Eigen::MatrixXd test_block;
+   
+	Eigen::VectorXd add_values;
+
+	//add prediction
+	Eigen::MatrixXd pred_cond=Eigen::MatrixXd::Zero(index_ppl_testing_size,num_test_site );
+    Eigen::MatrixXd var_cond=Eigen::MatrixXd::Zero(index_ppl_testing_size,num_test_site );
+    List pred_var_cond(2);
+	for(int i_pred_cond=0; i_pred_cond<index_test_size; i_pred_cond++){
+
+       Eigen::MatrixXd d0=pred_record[i_pred_cond];  //here I only record those need to be predicted
+       
+	   Eigen::MatrixXd d=d0.bottomRows(index_ppl_testing_size);
+       Eigen::MatrixXd h(index_ppl_testing_size,num_test_site);
+
+	   sd_dlm_record_i_pred_cond=sd_dlm_record[i_pred_cond];
+       for(int i_loc=0; i_loc<num_test_site; i_loc++){
+	         
+           sd_dlm_record_here=sd_dlm_record_i_pred_cond.col(i_loc).array().pow(2.0).matrix();   
+	       for(int i_D=0;i_D<num_ppl_all;i_D++){
+		           D.row(i_D)=sd_dlm_record_here.transpose();
+	       }
+		   Sigma=(K.array()*D.array()).matrix()*K.transpose();
+
+           Useful_block=Sigma.block(index_ppl_testing_first,0,index_ppl_testing_size,index_ppl_testing_first)*Sigma.block(0,0, index_ppl_testing_first,index_ppl_testing_first).inverse();
+           add_values=Useful_block*(output_ppl.row(testing_site_j_index[i_loc]-1).transpose()-rowMeans_t_output.head(index_ppl_testing_first)-d0.block(0,i_loc, index_ppl_testing_first,1));
+           
+		   d.col(i_loc)=d.col(i_loc)+add_values;
+
+	       h.col(i_loc)=(Sigma.block(index_ppl_testing_first,index_ppl_testing_first,index_ppl_testing_size,index_ppl_testing_size )-   Useful_block*Sigma.block(index_ppl_testing_first,0,index_ppl_testing_size,index_ppl_testing_first).transpose()).diagonal();
+
+		   /*
+		   for(int i_ppl=index_ppl_testing_first;i_ppl<(index_ppl_testing_last+1); i_ppl++){
+
+               
+              // test_block=(output_ppl.row(testing_site_j_index[i_loc]-1).transpose()-rowMeans_t_output.head(index_ppl_testing_first)-d.block(0,i_loc, index_ppl_testing_first,1));
+			 			   add_value=Useful_block*(output_ppl.row(testing_site_j_index[i_loc]-1).transpose()-rowMeans_t_output.head(index_ppl_testing_first)-d.block(0,i_loc, index_ppl_testing_first,1)))(0);
+
+              d(i_ppl,i_loc)=d(i_ppl,i_loc)+add_value;         
+			 
+		   } 
+		       */
+
+      
+          
+	   
+	   }
+	   //one can output this is one would like
+       // pred_record_cond_and_variance[i_pred_cond]=d.bottomRows(index_ppl_testing_size);
+	 //	pred_record_cond_and_variance[i_pred_cond+index_test_size]=h;
+
+		  //here I add the prediction 
+        pred_cond=pred_cond+d.bottomRows(index_ppl_testing_size);
+        var_cond=var_cond+h;
+     
+
+	
+	}
+     pred_cond=pred_cond/index_test_size;
+     var_cond=var_cond/index_test_size;
+
+	 pred_var_cond[0]=pred_cond;
+     pred_var_cond[1]=var_cond;
+
+   //  return pred_record_cond_and_variance;
+	 return pred_var_cond;
+
+}
+
+
+//this one  for prediction for all sites of testing ppl
+// [[Rcpp::export]]
+List Compute_pred_and_var_cond_all( const List pred_record, const List sd_dlm_record, const Eigen::MatrixXd K, const Eigen::MatrixXd output_ppl,const Eigen::VectorXd rowMeans_t_output,const Eigen::VectorXd index_test, const Eigen::VectorXd index_ppl_testing,const Eigen::VectorXd testing_site_j_index,const int num_test_site,const int num_ppl_all){
+    int index_test_size=index_test.size();
+	int index_ppl_testing_size=index_ppl_testing.size();
+    int index_ppl_testing_first=index_ppl_testing[0]-1;
+    //int index_ppl_testing_last=index_ppl_testing[index_ppl_testing_size-1]-1;
+
+	List pred_record_cond_and_variance (2*index_test_size);  //list of size with 2*M-burn.in, first M-burn.in is pred_record_cond and the last  M-burn.in is the variance
+     
+    Eigen::MatrixXd D(num_ppl_all,num_ppl_all);
+    Eigen::VectorXd sd_dlm_record_here;
+    Eigen::MatrixXd Sigma;
+    Eigen::MatrixXd  sd_dlm_record_i_pred_cond;
+    Eigen::MatrixXd Useful_block;
+	//Eigen::MatrixXd test_block;
+   
+	Eigen::VectorXd add_values;
+
+	//add prediction
+	Eigen::MatrixXd pred_cond=Eigen::MatrixXd::Zero(index_ppl_testing_size,num_test_site );
+    Eigen::MatrixXd var_cond=Eigen::MatrixXd::Zero(index_ppl_testing_size,num_test_site );
+    List pred_var_cond(2);
+	for(int i_pred_cond=0; i_pred_cond<index_test_size; i_pred_cond++){
+
+       Eigen::MatrixXd d0=pred_record[i_pred_cond];  //here I only record those need to be predicted
+       
+	   Eigen::MatrixXd d=d0.bottomRows(index_ppl_testing_size);
+       Eigen::MatrixXd h(index_ppl_testing_size,num_test_site);
+
+	   sd_dlm_record_i_pred_cond=sd_dlm_record[i_pred_cond];
+       for(int i_loc=0; i_loc<num_test_site; i_loc++){
+	         
+           sd_dlm_record_here=sd_dlm_record_i_pred_cond.col(i_loc).array().pow(2.0).matrix();   
+	       for(int i_D=0;i_D<num_ppl_all;i_D++){
+		           D.row(i_D)=sd_dlm_record_here.transpose();
+	       }
+		   Sigma=(K.array()*D.array()).matrix()*K.transpose();
+
+           Useful_block=Sigma.block(index_ppl_testing_first,0,index_ppl_testing_size,index_ppl_testing_first)*Sigma.block(0,0, index_ppl_testing_first,index_ppl_testing_first).inverse();
+           add_values=Useful_block*(output_ppl.row(testing_site_j_index[i_loc]-1).transpose()-rowMeans_t_output.head(index_ppl_testing_first)-d0.block(0,i_loc, index_ppl_testing_first,1));
+           
+		   d.col(i_loc)=d.col(i_loc)+add_values;
+
+	       h.col(i_loc)=(Sigma.block(index_ppl_testing_first,index_ppl_testing_first,index_ppl_testing_size,index_ppl_testing_size )-   Useful_block*Sigma.block(index_ppl_testing_first,0,index_ppl_testing_size,index_ppl_testing_first).transpose()).diagonal();
+
+		   /*
+		   for(int i_ppl=index_ppl_testing_first;i_ppl<(index_ppl_testing_last+1); i_ppl++){
+
+               
+              // test_block=(output_ppl.row(testing_site_j_index[i_loc]-1).transpose()-rowMeans_t_output.head(index_ppl_testing_first)-d.block(0,i_loc, index_ppl_testing_first,1));
+			 			   add_value=Useful_block*(output_ppl.row(testing_site_j_index[i_loc]-1).transpose()-rowMeans_t_output.head(index_ppl_testing_first)-d.block(0,i_loc, index_ppl_testing_first,1)))(0);
+
+              d(i_ppl,i_loc)=d(i_ppl,i_loc)+add_value;         
+			 
+		   } 
+		       */
+
+      
+          
+	   
+	   }
+	   //one can output this is one would like
+       // pred_record_cond_and_variance[i_pred_cond]=d.bottomRows(index_ppl_testing_size);
+	 //	pred_record_cond_and_variance[i_pred_cond+index_test_size]=h;
+
+		  //here I add the prediction 
+        pred_cond=pred_cond+d.bottomRows(index_ppl_testing_size);
+        var_cond=var_cond+h;
+     
+
+	
+	}
+     pred_cond=pred_cond/index_test_size;
+     var_cond=var_cond/index_test_size;
+
+	 pred_var_cond[0]=pred_cond;
+     pred_var_cond[1]=var_cond;
+
+   //  return pred_record_cond_and_variance;
+	 return pred_var_cond;
+
+}
+
+
+
+
+/////////////////////////////////These two functions are only for the one where the plug-in estimation is used
+// [[Rcpp::export]]
+List Compute_pred_and_var_cond_plug_in(const Eigen::MatrixXd pred_record, const Eigen::MatrixXd sd_all_dlm_testing_site_j_index, Eigen::MatrixXd K,const Eigen::MatrixXd output_ppl,const Eigen::VectorXd rowMeans_t_output,const Eigen::VectorXd index_ppl_testing,const Eigen::VectorXd testing_site_j_index,const int num_ppl_all ){
+
+   int  num_test_site=testing_site_j_index.size();
+   int index_ppl_testing_size=index_ppl_testing.size();
+   int index_ppl_testing_first=index_ppl_testing[0]-1;
+
+   Eigen::VectorXd sd_dlm_record_here;
+   Eigen::MatrixXd D(num_ppl_all,num_ppl_all);
+   Eigen::MatrixXd Sigma;
+       
+   Eigen::MatrixXd d=pred_record.bottomRows(index_ppl_testing_size);
+   Eigen::MatrixXd h(index_ppl_testing_size,num_test_site);
+   Eigen::MatrixXd Useful_block;
+   Eigen::VectorXd add_values;
+   List pred_var_cond(2);   
+   for(int i_loc=0; i_loc<num_test_site; i_loc++){
+	         
+           sd_dlm_record_here=sd_all_dlm_testing_site_j_index.col(i_loc).array().pow(2.0).matrix();   
+	       for(int i_D=0;i_D<num_ppl_all;i_D++){
+		           D.row(i_D)=sd_dlm_record_here.transpose();
+	       }
+		   Sigma=(K.array()*D.array()).matrix()*K.transpose();
+
+           Useful_block=Sigma.block(index_ppl_testing_first,0,index_ppl_testing_size,index_ppl_testing_first)*Sigma.block(0,0, index_ppl_testing_first,index_ppl_testing_first).inverse();
+           add_values=Useful_block*(output_ppl.row(testing_site_j_index[i_loc]-1).transpose()-rowMeans_t_output.head(index_ppl_testing_first)-pred_record.block(0,i_loc, index_ppl_testing_first,1));
+           
+		   d.col(i_loc)=d.col(i_loc)+add_values;
+
+	       h.col(i_loc)=(Sigma.block(index_ppl_testing_first,index_ppl_testing_first,index_ppl_testing_size,index_ppl_testing_size )-   Useful_block*Sigma.block(index_ppl_testing_first,0,index_ppl_testing_size,index_ppl_testing_first).transpose()).diagonal();
+
+      
+          
+	   
+	   }
+
+     pred_var_cond[0]=d;
+     pred_var_cond[1]=h;
+	 return pred_var_cond;
+
+}
+
+
